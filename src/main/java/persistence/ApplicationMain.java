@@ -15,7 +15,7 @@ public class ApplicationMain {
         ActorRef assigner = system.actorOf(Assigner.props(worker.path()), "assigner");
 
 //        assigner.tell("a", null);
-        system.scheduler().schedule(Duration.Zero(), Duration.create(3, TimeUnit.SECONDS), assigner, "a", system.dispatcher(), null);
+        system.scheduler().schedule(Duration.Zero(), Duration.create(2, TimeUnit.SECONDS), assigner, "a", system.dispatcher(), null);
         system.scheduler().schedule(Duration.Zero(), Duration.create(10, TimeUnit.SECONDS), assigner, new Messages.Snap(), system.dispatcher(), null);
     }
 }

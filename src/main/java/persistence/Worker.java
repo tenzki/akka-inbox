@@ -12,8 +12,7 @@ public class Worker extends UntypedActor {
     public void onReceive(Object message) throws Exception {
         if (message instanceof Messages.Msg) {
             Messages.Msg msg = (Messages.Msg) message;
-            Thread.sleep(5000);
-            System.out.println("message delivered " + msg.s + " " + msg.deliveryId);
+            Thread.sleep(3000); // simulate work being done
             getSender().tell(new Messages.Confirm(msg.deliveryId), getSelf());
         } else {
             unhandled(message);

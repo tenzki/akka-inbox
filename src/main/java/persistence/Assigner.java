@@ -22,16 +22,16 @@ class Assigner extends UntypedPersistentActorWithAtLeastOnceDelivery {
     @Override
     public void onReceiveCommand(Object message) {
         if (message instanceof String) {
-            String s = (String) message;
-            persist(new Messages.MsgSent(s), this::updateState);
+            final String s = (String) message;
+            persistAsync(new Messages.MsgSent(s), this::updateState);
         } else if (message instanceof Messages.Confirm) {
-            Messages.Confirm confirm = (Messages.Confirm) message;
-            persist(new Messages.MsgConfirmed(confirm.deliveryId), this::updateState);
+            final Messages.Confirm confirm = (Messages.Confirm) message;
+            persistAsync(new Messages.MsgConfirmed(confirm.deliveryId), this::updateState);
         } else if(message instanceof Messages.Snap) {
             saveSnapshot(getDeliverySnapshot());
         } else if(message instanceof SaveSnapshotSuccess) {
-            SnapshotMetadata metadata = ((SaveSnapshotSuccess) message).metadata();
-            deleteSnapshots(new SnapshotSelectionCriteria(metadata.sequenceNr() - 1, metadata.timestamp() - 1));
+            final SnapshotMetadata metadata = ((SaveSnapshotSuccess) message).metadata();
+            deleteSnapshots(new SnapshotSelectionCriteria(metadata.sequenceNr() - 1, Long.MAX_VALUE));
             deleteMessages(metadata.sequenceNr());
         } else {
             unhandled(message);
