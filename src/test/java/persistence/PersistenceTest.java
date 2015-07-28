@@ -1,51 +1,42 @@
 package persistence;
 
 import akka.actor.*;
-import akka.persistence.SnapshotSelectionCriteria;
-import akka.persistence.UntypedPersistentActor;
-import akka.persistence.UntypedPersistentView;
 import akka.testkit.JavaTestKit;
 import akka.testkit.TestActor;
+import com.mongodb.BasicDBObject;
+import com.mongodb.MongoClient;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
 import com.typesafe.config.*;
+import org.bson.Document;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import scala.concurrent.duration.Duration;
 
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static org.junit.Assert.assertEquals;
 
 public class PersistenceTest {
 
-    static class UtilActor extends UntypedPersistentActor {
-
-        public static Props props() {
-            return Props.create(UtilActor.class);
-        }
-
-        @Override
-        public String persistenceId() {
-            return "job-id";
-        }
-
-        @Override
-        public void onReceiveCommand(Object message) throws Exception {
-            if(message.equals("cleanup")) {
-                deleteMessages(Long.MAX_VALUE);
-                deleteSnapshots(new SnapshotSelectionCriteria(Long.MAX_VALUE, Long.MAX_VALUE));
-            }
-        }
-
-        @Override
-        public void onReceiveRecover(Object message) throws Exception {
-            // left empty
-        }
-
-    }
-
     static ActorSystem system;
-    static ActorRef util;
+
+    static MongoCollection<Document> journal;
+    static MongoCollection<Document> snaps;
+
+    public PersistenceTest() {
+        Logger mongoLogger = Logger.getLogger("org.mongodb.driver");
+        mongoLogger.setLevel(Level.SEVERE);
+
+        final MongoClient mongoClient = new MongoClient("localhost", 27017);
+        final MongoDatabase database = mongoClient.getDatabase("akka-inbox-test");
+        journal = database.getCollection("akka_persistence_journal");
+        snaps = database.getCollection("akka_persistence_snaps");
+    }
 
     @BeforeClass
     public static void setup() {
@@ -53,12 +44,16 @@ public class PersistenceTest {
                 .withValue("akka.contrib.persistence.mongodb.mongo.mongouri", ConfigValueFactory.fromAnyRef("mongodb://localhost:27017/akka-inbox-test"))
                 .withValue("akka.persistence.at-least-once-delivery.redeliver-interval", ConfigValueFactory.fromAnyRef("1s"));
         system = ActorSystem.create("persistence-test", config);
-        util = system.actorOf(UtilActor.props());
+    }
+
+    @After
+    public void after() {
+        journal.deleteMany(new BasicDBObject());
+        snaps.deleteMany(new BasicDBObject());
     }
 
     @AfterClass
     public static void tearDown() {
-        util.tell("cleanup", ActorRef.noSender());
         JavaTestKit.shutdownActorSystem(system, Duration.apply(10, TimeUnit.SECONDS), false);
         system = null;
     }
@@ -134,31 +129,52 @@ public class PersistenceTest {
             Messages.Msg msg = probe.expectMsgClass(Messages.Msg.class);
             probe.reply(new Messages.Confirm((msg).deliveryId));
             probe.expectNoMsg(duration("1 s"));
+
+
+            assertEquals(2, journal.count());
+            assertEquals(0, snaps.count());
         }};
     }
-
 
     @Test
     public void testAssignerSnapshot() {
         new JavaTestKit(system) {{
             final JavaTestKit probe = new JavaTestKit(system);
-            util.tell(probe.getRef(), getRef());
             final ActorRef ref = system.actorOf(Assigner.props(probe.getRef().path()));
-            probe.watch(ref);
-            ref.tell("a", getRef());
 
+            ref.tell("a", getRef());
+            probe.expectMsgClass(Messages.Msg.class);
+
+            ref.tell(new Messages.Snap(), getRef());
+            probe.expectMsgClass(Messages.Msg.class);
+
+            assertEquals(0, journal.count());
+            assertEquals(1, snaps.count());
+        }};
+    }
+
+    @Test
+    public void testAssignerSnapshotRedeliver() {
+        new JavaTestKit(system) {{
+            final JavaTestKit probe = new JavaTestKit(system);
+            final ActorRef ref = system.actorOf(Assigner.props(probe.getRef().path()));
+
+            ref.tell("a", getRef());
             probe.expectMsgClass(Messages.Msg.class);
             ref.tell(new Messages.Snap(), getRef());
 
             probe.expectNoMsg(duration("1 s"));
 
+            probe.watch(ref);
             ref.tell(PoisonPill.getInstance(), getRef());
             probe.expectMsgClass(Terminated.class);
 
             system.actorOf(Assigner.props(probe.getRef().path()));
             Messages.Msg msg = probe.expectMsgClass(Messages.Msg.class);
             probe.reply(new Messages.Confirm((msg).deliveryId));
-            probe.expectNoMsg(duration("1 s"));
+
+            assertEquals(1, journal.count());
+            assertEquals(1, snaps.count());
         }};
     }
 
